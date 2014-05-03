@@ -38,17 +38,19 @@ module DelayedPaperclip
   end
 
   module Glue
-    def self.included base #:nodoc:
+    def self.included(base)
       base.extend(ClassMethods)
+      base.send :include, InstanceMethods
     end
   end
 
   module MongoidGlue
-
     @@paperclip_glue = nil
 
-    def self.included base #:nodoc:
+    def self.included(base)
       base.extend(ClassMethods)
+      base.send :include, InstanceMethods
+
       unless @@paperclip_glue
         Paperclip::Attachment.send(:include, DelayedPaperclip::Attachment)
         Paperclip::UrlGenerator.send(:include, DelayedPaperclip::UrlGenerator)
@@ -60,35 +62,59 @@ module DelayedPaperclip
   module ClassMethods
 
     def process_in_background(name, options = {})
-      include InstanceMethods
+      # initialize as hash
+      paperclip_definitions[name][:delayed] = {}
 
-      attachment_definitions[name][:delayed] = {}
+      # Set Defaults
+      only_process_default = paperclip_definitions[name][:only_process]
+      only_process_default ||= []
       {
         :priority => 0,
-        :only_process => attachment_definitions[name][:only_process],
+        :only_process => only_process_default,
         :url_with_processing => DelayedPaperclip.options[:url_with_processing],
-        :processing_image_url => options[:processing_image_url]
+        :processing_image_url => options[:processing_image_url],
+        :queue => nil
       }.each do |option, default|
 
-        attachment_definitions[name][:delayed][option] = options.key?(option) ? options[option] : default
+        paperclip_definitions[name][:delayed][option] = options.key?(option) ? options[option] : default
 
       end
 
+      # Sets callback
       if respond_to?(:after_commit)
         after_commit  :enqueue_delayed_processing
       else
-        after_save  :enqueue_delayed_processing
+        after_save    :enqueue_delayed_processing
+      end
+    end
+
+    def paperclip_definitions
+      @paperclip_definitions ||= if respond_to? :attachment_definitions
+        attachment_definitions
+      else
+        Paperclip::Tasks::Attachments.definitions_for(self)
       end
     end
   end
 
   module InstanceMethods
 
+    # First mark processing
+    # then enqueue
+    def enqueue_delayed_processing
+      mark_enqueue_delayed_processing
+
+      (@_enqued_for_processing || []).each do |name|
+        enqueue_post_processing_for(name)
+      end
+      @_enqued_for_processing_with_processing = []
+      @_enqued_for_processing = []
+    end
+
     # setting each inididual NAME_processing to true, skipping the ActiveModel dirty setter
     # Then immediately push the state to the database
     def mark_enqueue_delayed_processing
       unless @_enqued_for_processing_with_processing.blank? # catches nil and empty arrays
-        # if Mongoid
         if defined? ::Mongoid
           @_enqued_for_processing_with_processing.each do |n|
             self.set("#{n}_processing", true)
@@ -101,22 +127,10 @@ module DelayedPaperclip
       end
     end
 
-    # First mark processing
-    # then create
-    def enqueue_delayed_processing
-      mark_enqueue_delayed_processing
-
-      (@_enqued_for_processing || []).each do |name|
-        enqueue_post_processing_for(name)
-      end
-      @_enqued_for_processing_with_processing = []
-      @_enqued_for_processing = []
-    end
-
     def enqueue_post_processing_for name
       instance_id = nil
       if defined? ::Mongoid
-        instance_id = self.id
+        instance_id = self.id.to_s
       else
         instance_id = read_attribute(:id)
       end

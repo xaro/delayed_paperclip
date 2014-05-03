@@ -2,9 +2,6 @@
 
 source "http://rubygems.org"
 
-gem "appraisal"
-gem "json", :platforms=>:ruby_18
-gem "delayed_job_active_record", :require=>false
-gem "rails", "~> 3.2.8"
+gem "rails", "~> 3.2.17"
 
 gemspec :path=>"../"

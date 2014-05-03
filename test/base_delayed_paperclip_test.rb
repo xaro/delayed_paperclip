@@ -156,7 +156,7 @@ module BaseDelayedPaperclipTest
   def test_after_callback_is_functional
     Dummy.send(:define_method, :done_processing) { puts 'done' }
     Dummy.after_image_post_process :done_processing
-    Dummy.any_instance.expects(:done_processing)
+    Dummy.any_instance.expects(:done_processing).once
     dummy = Dummy.new(:image => File.open("#{RAILS_ROOT}/test/fixtures/12k.png"))
     dummy.save!
     process_jobs
@@ -164,11 +164,10 @@ module BaseDelayedPaperclipTest
 
   def test_delayed_paperclip_functioning_with_after_update_callback
     reset_class "Dummy", :with_processed => true, :with_after_update_callback => true
-    Dummy.any_instance.expects(:reprocess)
+    Dummy.any_instance.expects(:reprocess).once
     dummy = Dummy.new(:image => File.open("#{RAILS_ROOT}/test/fixtures/12k.png"))
     dummy.save!
     process_jobs
-    dummy.name = "foobar123"
   end
 
   def test_delayed_paperclip_functioning_with_only_process_option
@@ -187,6 +186,20 @@ module BaseDelayedPaperclipTest
     process_jobs
   end
 
+  def test_delayed_paperclip_functioning_with_only_process_and_paperclip_only_process_option
+    reset_class "Dummy", :with_processed => true, :only_process => [:small], :paperclip => { :only_process => [:thumbnail] }
+
+    Paperclip::Attachment.any_instance.expects(:post_process).with(:thumbnail)
+    Paperclip::Attachment.any_instance.expects(:post_process).with(:small).never
+
+    Paperclip::Attachment.any_instance.expects(:reprocess!).with(:small)
+    Paperclip::Attachment.any_instance.expects(:reprocess!).with(:thumbnail).never
+
+    dummy = Dummy.new(:image => File.open("#{RAILS_ROOT}/test/fixtures/12k.png"))
+    dummy.save!
+    process_jobs
+  end
+
   def test_delayed_paperclip_should_convert_image_formats
     reset_class "Dummy", :with_processed => true, :paperclip => { :styles => {:thumbnail => ['12x12', :jpg]} }
     dummy = Dummy.new(:image => File.open("#{RAILS_ROOT}/test/fixtures/12k.png"))
@@ -200,6 +213,7 @@ module BaseDelayedPaperclipTest
     reset_class "Dummy", :with_processed => true, :paperclip => { :styles => {:thumbnail => ['12x12', :jpg]} }
     dummy = Dummy.new(:image => File.open("#{RAILS_ROOT}/test/fixtures/12k.png"))
     dummy.save!
+
     existing_jobs_count = jobs_count
     dummy.update_attribute(:image_processing, false)
     dummy.image.reprocess_without_delay!(:thumbnail)
